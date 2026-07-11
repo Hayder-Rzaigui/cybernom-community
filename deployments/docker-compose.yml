@@ -1,0 +1,94 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cybernom
+      POSTGRES_USER: cybernom
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../migrations:/docker-entrypoint-initdb.d:ro
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cybernom -d cybernom"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # No ports exposed to the host — only reachable from other containers
+    # on the internal network. This is deliberate: the database has no
+    # business being reachable from outside the compose network.
+
+  tor:
+    image: dperson/torproxy:latest
+    restart: unless-stopped
+    networks:
+      - internal
+    # SOCKS5 proxy only reachable within the internal network, used
+    # exclusively by cybernom for .onion feed types.
+
+  cybernom:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      tor:
+        condition: service_started
+    environment:
+      CYBERNOM_DB_HOST: postgres
+      CYBERNOM_DB_PORT: "5432"
+      CYBERNOM_TOR_PROXY: "tor:9050"
+      CYBERNOM_TRUST_PROXY_HEADERS: "true" # safe here: nginx is the only thing that can reach cybernom directly
+      CYBERNOM_DB_PASSWORD: "${CYBERNOM_DB_PASSWORD:?set in .env}"
+      CYBERNOM_JWT_SIGNING_KEY: "${CYBERNOM_JWT_SIGNING_KEY:?set in .env}"
+      CYBERNOM_DISCORD_WEBHOOK: "${CYBERNOM_DISCORD_WEBHOOK:-}"
+      CYBERNOM_SLACK_WEBHOOK: "${CYBERNOM_SLACK_WEBHOOK:-}"
+      CYBERNOM_SMTP_PASSWORD: "${CYBERNOM_SMTP_PASSWORD:-}"
+      CYBERNOM_GRAPH_CLIENT_SECRET: "${CYBERNOM_GRAPH_CLIENT_SECRET:-}"
+    volumes:
+      - ../config/config.yaml:/etc/cybernom/config.yaml:ro
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/cybernom", "-version"] # placeholder; readiness is verified via nginx -> /readyz
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # No ports exposed to the host directly — only nginx talks to this
+    # container. This is the enforcement mechanism behind
+    # server.trust_proxy_headers=true being safe: nginx is the only path in.
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - cybernom
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./nginx/nginx.conf.example:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    networks:
+      - internal
+    # This is the ONLY container exposed to the host. See
+    # deployments/nginx/nginx.conf.example for TLS termination, rate
+    # limiting, and (optional) HTTP basic auth as an additional layer in
+    # front of CyberNom's own JWT auth.
+
+networks:
+  internal:
+    driver: bridge
+    internal: false # cybernom/tor need outbound egress to fetch feeds; not exposed to host regardless
+
+volumes:
+  pgdata:
+
+secrets:
+  db_password:
+    file: ../secrets/db_password.txt

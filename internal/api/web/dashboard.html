@@ -1,0 +1,1216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CyberNom — Dashboard</title>
+<link rel="icon" href="data:,">
+<!--
+  Chart.js is loaded from cdnjs for the donut/line/bar widgets. This is the
+  one third-party script this app loads; the CSP for this route
+  (see internal/api/router.go) explicitly allow-lists only this host for
+  script-src. If you self-host Chart.js later, remove the cdnjs allowance
+  from the CSP and point this at a local /static/ path instead.
+-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:        #0A0C10;
+    --panel:     #10131A;
+    --panel-2:   #151923;
+    --line:      #212632;
+    --line-2:    #2C3341;
+    --frame:     #17191D;
+    --text:      #C7CDD9;
+    --text-hi:   #EEF1F6;
+    --text-dim:  #808A9C;
+    --text-faint:#4C5462;
+    --accent:    #6FA3D8;
+    --accent-hi: #8FBBE5;
+    --accent-dim:#1C2C3C;
+    --low:       #5B6472;
+    --medium:    #D9A441;
+    --high:      #DB7B42;
+    --critical:  #D64F45;
+    --network:   #6B8CB8;
+    --exfil:     #9B7FD1;
+    --ok:        #3FB876;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  }
+  /* Light mode: CyberNom ships dark-by-default (see body[data-theme] below,
+     no attribute = dark) for 24/7 SOC eye strain, but a toggle is provided
+     for analysts working in a bright environment or who simply prefer it. */
+  html[data-theme="light"]{
+    --bg:        #F4F6F9;
+    --panel:     #FFFFFF;
+    --panel-2:   #EEF1F6;
+    --line:      #DDE2EA;
+    --line-2:    #C7CDD9;
+    --frame:     #D8DDE6;
+    --text:      #3A4150;
+    --text-hi:   #14171C;
+    --text-dim:  #667085;
+    --text-faint:#98A2B3;
+    --accent-dim:#DCE9F7;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--sans); font-size:13px;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{ color:inherit; }
+  ::-webkit-scrollbar{ height:6px; width:6px; }
+  ::-webkit-scrollbar-thumb{ background:var(--line-2); border-radius:3px; }
+  ::selection{ background:var(--accent-dim); color:var(--text-hi); }
+
+  .login-shell{ min-height:100%; display:flex; align-items:center; justify-content:center; padding:24px; }
+  .login-card{
+    width:100%; max-width:360px; background:var(--panel);
+    border:1.5px solid var(--frame); border-radius:6px; padding:32px;
+    box-shadow: 0 0 0 1px rgba(122,162,204,0.06);
+  }
+  .login-card .mark{
+    width:36px; height:36px; border-radius:6px; background:var(--accent);
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--mono); font-size:18px; font-weight:800; color:#0C0806;
+    margin-bottom:18px;
+  }
+  .login-card h1{ font-size:16px; margin:0 0 4px; color:var(--text-hi); font-weight:700; }
+  .login-card p{ font-size:12px; color:var(--text-dim); margin:0 0 22px; }
+  .field{ margin-bottom:14px; }
+  .field label{ display:block; font-size:10.5px; color:var(--text-dim); margin-bottom:6px; font-family:var(--mono); text-transform:uppercase; letter-spacing:0.05em; }
+  .field input{
+    width:100%; background:var(--bg); border:1.5px solid var(--frame); border-radius:4px;
+    color:var(--text-hi); padding:10px 12px; font-size:13px; font-family:var(--sans);
+    outline:none; transition:border-color .15s ease;
+  }
+  .field input:focus{ border-color:var(--accent); }
+  .login-btn{
+    width:100%; background:var(--accent); color:#0C0806; border:none;
+    padding:11px; border-radius:4px; font-weight:700; font-size:13px;
+    cursor:pointer; margin-top:6px; transition:filter .15s ease;
+  }
+  .login-btn:hover{ filter:brightness(1.08); }
+  .login-btn:disabled{ opacity:0.5; cursor:default; }
+  .login-error{ margin-top:14px; font-size:11.5px; color:var(--critical); font-family:var(--mono); display:none; }
+
+  .header{ border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; z-index:20; }
+  .header-row1{ display:flex; align-items:center; justify-content:space-between; padding:13px 22px 12px; }
+  .brand{ display:flex; align-items:center; gap:9px; font-weight:700; font-size:14.5px; color:var(--text-hi); }
+  .brand .mark{
+    width:23px; height:23px; border-radius:4px; background:var(--accent); border:1.5px solid var(--frame);
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--mono); font-size:12px; font-weight:700; color:#0C0806;
+  }
+  .header-right{ display:flex; align-items:center; gap:12px; }
+  .env-pill{
+    font-family:var(--mono); font-size:10px; font-weight:600; color:var(--ok);
+    border:1px solid #1E4530; background:#0E1F16; padding:3px 8px; border-radius:20px;
+    white-space:nowrap; display:flex; align-items:center; gap:5px;
+  }
+  .env-pill .dot{ width:6px; height:6px; border-radius:50%; background:var(--ok); }
+  .env-pill.down{ color:var(--critical); border-color:#4A1E1E; background:#221010; }
+  .env-pill.down .dot{ background:var(--critical); }
+  #logout-btn{
+    background:var(--panel-2); border:1.5px solid var(--frame); color:var(--text-dim);
+    font-family:var(--mono); font-size:10.5px; padding:6px 10px; border-radius:4px; cursor:pointer;
+  }
+  #logout-btn:hover{ border-color:var(--line-2); color:var(--text); }
+
+  .header-row2{ display:flex; align-items:center; justify-content:space-between; padding:0 22px 14px; gap:12px; flex-wrap:wrap; }
+  .header-titleblock{ min-width:0; }
+  .header-titleblock h1{ margin:0; font-size:16px; font-weight:700; color:var(--text-hi); }
+  .header-titleblock .sub{ font-family:var(--mono); font-size:11px; color:var(--text-faint); margin-top:2px; }
+
+  .header-controls{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .icon-btn{
+    background:var(--panel-2); border:1.5px solid var(--frame); color:var(--text-dim);
+    font-family:var(--mono); font-size:11px; padding:7px 12px; border-radius:4px; cursor:pointer;
+    display:flex; align-items:center; gap:6px; white-space:nowrap;
+  }
+  .icon-btn:hover{ border-color:var(--line-2); color:var(--text); }
+
+  .shell{ padding:20px 22px 60px; max-width:1400px; margin:0 auto; }
+
+  .grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:14px; }
+  .widget{
+    background:var(--panel); border:1.5px solid var(--frame); border-radius:4px;
+    padding:14px 16px; min-width:0;
+    box-shadow: 0 0 0 1px rgba(122,162,204,0.06);
+  }
+  .widget-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .widget-head h3{ margin:0; font-size:11.5px; font-weight:600; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.04em; }
+
+  .donut-widget{ display:flex; align-items:center; gap:14px; }
+  .donut-canvas-wrap{ position:relative; width:88px; height:88px; flex-shrink:0; }
+  .donut-canvas-wrap canvas{ width:100%!important; height:100%!important; }
+  .donut-center{ position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; pointer-events:none; }
+  .donut-center .n{ font-family:var(--mono); font-weight:700; font-size:18px; color:var(--text-hi); line-height:1; }
+  .donut-center .l{ font-size:8.5px; color:var(--text-faint); margin-top:2px; text-transform:uppercase; letter-spacing:0.05em; }
+  .donut-legend{ display:flex; flex-direction:column; gap:5px; font-size:11px; }
+  .donut-legend div{ display:flex; align-items:center; gap:6px; color:var(--text-dim); }
+  .donut-legend i{ width:7px; height:7px; border-radius:2px; flex-shrink:0; }
+  .donut-legend b{ color:var(--text-hi); font-weight:600; margin-left:auto; padding-left:10px; font-family:var(--mono); }
+
+  .trend-widget .n{ font-family:var(--mono); font-size:22px; font-weight:700; color:var(--text-hi); }
+  .trend-widget .delta{ font-family:var(--mono); font-size:11px; margin-left:8px; }
+  .trend-widget .delta.up{ color:var(--critical); }
+  .trend-widget .delta.down{ color:var(--ok); }
+  .trend-widget .delta.flat{ color:var(--text-faint); }
+  .trend-widget canvas{ margin-top:8px; }
+
+  .widget.wide{ grid-column:span 2; }
+  .widget.full{ grid-column:span 4; }
+
+  .bar-legend{ display:flex; gap:14px; margin-bottom:8px; font-size:10.5px; color:var(--text-dim); flex-wrap:wrap; }
+  .bar-legend div{ display:flex; align-items:center; gap:5px; }
+  .bar-legend i{ width:7px; height:7px; border-radius:2px; }
+
+  .cat-list{ display:flex; flex-direction:column; gap:9px; }
+  .cat-row{ display:grid; grid-template-columns:104px 1fr 26px; align-items:center; gap:10px; font-size:11px; }
+  .cat-row .label{ color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cat-track{ height:7px; background:var(--line); border-radius:4px; overflow:hidden; }
+  .cat-track span{ display:block; height:100%; border-radius:4px; }
+  .cat-row .val{ font-family:var(--mono); color:var(--text-hi); text-align:right; }
+
+  .widget-empty{ font-family:var(--mono); font-size:11px; color:var(--text-faint); padding:8px 0; }
+
+  .section-head{ display:flex; align-items:center; justify-content:space-between; margin:22px 0 10px; flex-wrap:wrap; gap:10px; }
+  .section-head h2{ margin:0; font-size:13.5px; font-weight:700; color:var(--text-hi); }
+  .section-head h2 span{ color:var(--text-faint); font-weight:400; font-family:var(--mono); font-size:12px; margin-left:6px; }
+  .filters{ display:flex; gap:1px; background:var(--frame); border:1.5px solid var(--frame); border-radius:4px; overflow:hidden; }
+  .filters button{ background:var(--panel); border:none; color:var(--text-dim); font-family:var(--mono); font-size:10.5px; padding:6px 12px; cursor:pointer; }
+  .filters button.active{ background:var(--accent-dim); color:var(--accent); }
+
+  .alert-table{ border:1.5px solid var(--frame); border-radius:4px; overflow:hidden; background:var(--panel); }
+  .at-head{
+    display:grid; grid-template-columns:90px 1fr 150px 130px 160px;
+    padding:9px 16px; border-bottom:1px solid var(--line); background:var(--panel-2);
+    font-family:var(--mono); font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.06em;
+  }
+  .at-row{
+    display:grid; grid-template-columns:90px 1fr 150px 130px 160px;
+    align-items:center; padding:11px 16px; border-bottom:1px solid var(--line);
+    transition:background .1s ease;
+  }
+  .at-row:last-child{ border-bottom:none; }
+  .at-row:hover{ background:var(--panel-2); }
+  .at-row.resolved{ opacity:0.42; }
+
+  .sev-chip{
+    display:inline-flex; align-items:center; gap:5px; font-family:var(--mono); font-size:10px; font-weight:700;
+    text-transform:uppercase; letter-spacing:0.03em; padding:3px 8px; border-radius:20px;
+  }
+  .sev-chip.low{ color:var(--low); background:rgba(91,100,114,0.15); }
+  .sev-chip.medium{ color:var(--medium); background:rgba(223,168,62,0.14); }
+  .sev-chip.high{ color:var(--high); background:rgba(226,130,62,0.14); }
+  .sev-chip.critical{ color:var(--critical); background:rgba(225,73,62,0.15); }
+
+  .at-main .kw{ font-weight:600; font-size:12.5px; color:var(--text-hi); }
+  .at-main .kw .tag{
+    display:inline-block; margin-left:7px; font-family:var(--mono); font-size:9.5px; color:var(--text-dim);
+    border:1px solid var(--line-2); border-radius:4px; padding:1px 6px; vertical-align:middle;
+  }
+  .at-main .title{ margin-top:3px; font-size:11.5px; color:var(--text-dim); }
+  .at-main .title a{ text-decoration:none; }
+  .at-main .title a:hover{ color:var(--accent); text-decoration:underline; }
+
+  .source-cell{ font-family:var(--mono); font-size:11px; color:var(--text-dim); }
+  .source-cell .sub{ font-size:9.5px; color:var(--text-faint); margin-top:2px; text-transform:uppercase; letter-spacing:0.04em; }
+  .time-cell{ font-family:var(--mono); font-size:10.5px; color:var(--text-faint); text-align:right; }
+  .time-cell .rel{ color:var(--text-dim); }
+  .action-cell{ text-align:right; display:flex; gap:6px; justify-content:flex-end; }
+  .ack-btn, .resolve-btn{
+    background:transparent; border:1.5px solid var(--frame); color:var(--text-dim);
+    font-family:var(--mono); font-size:10px; padding:5px 10px; border-radius:3px; cursor:pointer;
+  }
+  .ack-btn:hover{ border-color:var(--accent); color:var(--accent); }
+  .resolve-btn:hover{ border-color:var(--ok); color:var(--ok); }
+  .ack-btn:disabled, .resolve-btn:disabled{ opacity:0.4; cursor:default; }
+  .ack-label{ font-family:var(--mono); font-size:10px; color:var(--text-faint); }
+
+  .empty, .loading{ padding:64px 24px; text-align:center; color:var(--text-faint); font-family:var(--mono); font-size:12px; line-height:1.8; }
+  .empty .big{ font-size:13.5px; color:var(--text-dim); margin-bottom:6px; }
+
+  @media (max-width:640px){
+    .header-row1{ padding:12px 16px 10px; }
+    .header-row2{ padding:0 16px 14px; flex-direction:column; align-items:flex-start; }
+    .header-controls{ width:100%; justify-content:space-between; }
+  }
+  @media (max-width:1100px){
+    .grid{ grid-template-columns:repeat(2,1fr); }
+    .widget.wide{ grid-column:span 2; }
+    .widget.full{ grid-column:span 2; }
+  }
+  @media (max-width:720px){
+    .grid{ grid-template-columns:1fr; }
+    .widget.wide, .widget.full{ grid-column:span 1; }
+    .at-head, .at-row{ grid-template-columns:70px 1fr; }
+    .source-cell, .time-cell, .action-cell{ display:none; }
+  }
+
+  :focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+  /* --- Enterprise upgrade additions: nav tabs, regex playground, feed
+     management, compliance exports. Reuses the existing widget/panel
+     visual language above rather than introducing a second design system. --- */
+  .nav-tabs{ display:flex; gap:2px; padding:0 22px; background:var(--panel); border-bottom:1px solid var(--line); overflow-x:auto; }
+  .nav-tab{
+    background:transparent; border:none; color:var(--text-dim); font-family:var(--mono); font-size:11px;
+    padding:10px 14px; cursor:pointer; border-bottom:2px solid transparent; white-space:nowrap;
+  }
+  .nav-tab:hover{ color:var(--text); }
+  .nav-tab.active{ color:var(--accent); border-bottom-color:var(--accent); }
+  .tab-panel{ display:none; }
+  .tab-panel.active{ display:block; }
+
+  .regex-row{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
+  @media (max-width:900px){ .regex-row{ grid-template-columns:1fr; } }
+  .regex-row label{ display:block; font-size:10.5px; color:var(--text-dim); margin-bottom:6px; font-family:var(--mono); text-transform:uppercase; letter-spacing:0.05em; }
+  .regex-row select, .regex-row input, .regex-row textarea{
+    width:100%; background:var(--bg); border:1.5px solid var(--frame); border-radius:4px;
+    color:var(--text-hi); padding:9px 11px; font-size:12.5px; font-family:var(--mono); outline:none;
+  }
+  .regex-row textarea{ min-height:120px; resize:vertical; }
+  .ioc-chip-row{ display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  .ioc-chip{
+    background:var(--panel-2); border:1.5px solid var(--frame); color:var(--text-dim);
+    font-family:var(--mono); font-size:10px; padding:5px 10px; border-radius:20px; cursor:pointer;
+  }
+  .ioc-chip:hover{ border-color:var(--accent); color:var(--accent); }
+  .regex-result{ margin-top:12px; font-family:var(--mono); font-size:11.5px; padding:12px 14px; border-radius:4px; white-space:pre-wrap; word-break:break-word; }
+  .regex-result.ok{ background:rgba(63,184,118,0.1); border:1px solid #1E4530; color:var(--ok); }
+  .regex-result.err{ background:rgba(214,79,69,0.1); border:1px solid #4A1E1E; color:var(--critical); }
+
+  .feed-table{ width:100%; border-collapse:collapse; }
+  .feed-table th{ text-align:left; font-family:var(--mono); font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.05em; padding:9px 12px; border-bottom:1px solid var(--line); }
+  .feed-table td{ padding:10px 12px; border-bottom:1px solid var(--line); font-size:12px; color:var(--text); vertical-align:middle; }
+  .feed-toggle{ width:38px; height:20px; background:var(--line-2); border:none; border-radius:10px; cursor:pointer; position:relative; flex-shrink:0; }
+  .feed-toggle.on{ background:var(--ok); }
+  .feed-toggle::after{ content:''; position:absolute; width:16px; height:16px; background:#fff; border-radius:50%; top:2px; left:2px; transition:left .15s ease; }
+  .feed-toggle.on::after{ left:20px; }
+
+  .export-btn{
+    background:var(--panel-2); border:1.5px solid var(--frame); color:var(--text-dim);
+    font-family:var(--mono); font-size:11px; padding:9px 14px; border-radius:4px; cursor:pointer; margin-right:8px; margin-bottom:8px;
+  }
+  .export-btn:hover{ border-color:var(--accent); color:var(--accent); }
+
+  .sla-metric-row{ display:flex; gap:20px; flex-wrap:wrap; margin-bottom:18px; }
+  .sla-metric{ background:var(--panel); border:1.5px solid var(--frame); border-radius:4px; padding:14px 18px; min-width:140px; }
+  .sla-metric .n{ font-family:var(--mono); font-size:20px; font-weight:700; color:var(--text-hi); }
+  .sla-metric .l{ font-size:10.5px; color:var(--text-faint); margin-top:4px; text-transform:uppercase; letter-spacing:0.04em; }
+</style>
+</head>
+<body>
+<div id="login-view" class="login-shell">
+  <form id="login-form" class="login-card" autocomplete="on">
+    <div class="mark">C</div>
+    <h1>CyberNom</h1>
+    <p>Sign in to view the threat intelligence dashboard.</p>
+    <div class="field">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="username" required>
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+    </div>
+    <button type="submit" class="login-btn" id="login-submit">Sign in</button>
+    <div class="login-error" id="login-error"></div>
+  </form>
+</div>
+
+<div id="app-view" style="display:none;">
+  <div class="header">
+    <div class="header-row1">
+      <div class="brand"><div class="mark">C</div>CyberNom</div>
+      <div class="header-right">
+        <span class="env-pill" id="conn-pill"><span class="dot"></span><span id="conn-label">connecting…</span></span>
+        <button class="icon-btn" id="theme-toggle" type="button" title="Toggle light/dark mode">🌙</button>
+        <button id="logout-btn" type="button">Sign out</button>
+      </div>
+    </div>
+    <div class="nav-tabs" id="nav-tabs">
+      <button class="nav-tab active" data-tab="overview">Overview</button>
+      <button class="nav-tab" data-tab="regex">Regex Builder</button>
+      <button class="nav-tab" data-tab="feeds">Threat Feeds</button>
+      <button class="nav-tab" data-tab="compliance">Compliance</button>
+      <button class="nav-tab" data-tab="docs">API Docs</button>
+    </div>
+    <div class="header-row2">
+      <div class="header-titleblock">
+        <h1>Threat Intelligence Dashboard</h1>
+        <div class="sub" id="last-sync">syncing…</div>
+      </div>
+      <div class="header-controls">
+        <button class="icon-btn" id="days-btn" data-days="7">⏱ Last 7 days</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="shell">
+
+    <div class="tab-panel active" id="tab-overview">
+    <div class="grid" id="widget-grid">
+
+      <div class="widget donut-widget">
+        <div class="donut-canvas-wrap"><canvas id="d-sev"></canvas>
+          <div class="donut-center"><div class="n" id="d-sev-total">–</div><div class="l">open</div></div>
+        </div>
+        <div>
+          <div class="widget-head" style="margin-bottom:8px;"><h3>Open alerts by severity</h3></div>
+          <div class="donut-legend" id="d-sev-legend">
+            <div><i style="background:var(--critical)"></i>Critical<b>–</b></div>
+            <div><i style="background:var(--high)"></i>High<b>–</b></div>
+            <div><i style="background:var(--medium)"></i>Medium<b>–</b></div>
+            <div><i style="background:var(--low)"></i>Low<b>–</b></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="widget donut-widget">
+        <div class="donut-canvas-wrap"><canvas id="d-status"></canvas>
+          <div class="donut-center"><div class="n" id="d-status-total">–</div><div class="l">alerts</div></div>
+        </div>
+        <div>
+          <div class="widget-head" style="margin-bottom:8px;"><h3>Alerts by status</h3></div>
+          <div class="donut-legend" id="d-status-legend">
+            <div><i style="background:var(--accent)"></i>New<b>–</b></div>
+            <div><i style="background:var(--medium)"></i>In triage<b>–</b></div>
+            <div><i style="background:var(--ok)"></i>Resolved<b>–</b></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="widget donut-widget">
+        <div class="donut-canvas-wrap"><canvas id="d-sla"></canvas>
+          <div class="donut-center"><div class="n" id="d-sla-pct">–</div><div class="l">on time</div></div>
+        </div>
+        <div>
+          <div class="widget-head" style="margin-bottom:8px;"><h3>SLA compliance</h3></div>
+          <div class="donut-legend" id="d-sla-legend">
+            <div><i style="background:var(--ok)"></i>Met<b>–</b></div>
+            <div><i style="background:var(--critical)"></i>Breached<b>–</b></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="widget">
+        <div class="widget-head"><h3>Open alerts by category</h3></div>
+        <div class="cat-list" id="cat-list">
+          <div class="widget-empty">loading…</div>
+        </div>
+      </div>
+
+      <div class="widget wide trend-widget">
+        <div class="widget-head"><h3>Detection volume — <span id="trend-range-label">7 days</span></h3></div>
+        <span class="n" id="trend-total">–</span><span class="delta" id="trend-delta"></span>
+        <canvas id="line-detect" height="70"></canvas>
+      </div>
+
+      <div class="widget wide">
+        <div class="widget-head"><h3>Log collection by source</h3></div>
+        <div class="bar-legend" id="bar-legend">
+          <div><i style="background:var(--accent)"></i>Forums</div>
+          <div><i style="background:var(--exfil)"></i>Pastes</div>
+          <div><i style="background:var(--medium)"></i>Telegram</div>
+          <div><i style="background:var(--ok)"></i>Code hosts</div>
+          <div><i style="background:var(--low)"></i>Other</div>
+        </div>
+        <canvas id="bar-stack" height="70"></canvas>
+      </div>
+
+    </div>
+
+    <div class="section-head">
+      <h2>Open alerts <span id="visible-count"></span></h2>
+      <div class="filters" id="filters">
+        <button data-sev="" class="active">all</button>
+        <button data-sev="critical">critical</button>
+        <button data-sev="high">high</button>
+        <button data-sev="medium">medium</button>
+        <button data-sev="low">low</button>
+      </div>
+    </div>
+
+    <div class="alert-table">
+      <div class="at-head"><span>Severity</span><span>Alert</span><span>Source</span><span>Detected</span><span></span></div>
+      <div id="rows">
+        <div class="loading">reading alert feed…</div>
+      </div>
+    </div>
+
+    </div><!-- /#tab-overview -->
+
+    <div class="tab-panel" id="tab-regex">
+      <div class="section-head"><h2>Regex Playground</h2></div>
+      <div class="widget full" style="margin-bottom:14px;">
+        <div class="regex-row">
+          <div>
+            <label for="regex-template">IOC template</label>
+            <select id="regex-template">
+              <option value="">— custom pattern —</option>
+              <option value="ipv4">IPv4 address</option>
+              <option value="domain">Domain name</option>
+              <option value="md5">MD5 hash</option>
+              <option value="sha256">SHA-256 hash</option>
+              <option value="url">URL</option>
+              <option value="email">Email address</option>
+            </select>
+            <div class="ioc-chip-row">
+              <button class="ioc-chip" data-t="ipv4">IPv4</button>
+              <button class="ioc-chip" data-t="domain">Domain</button>
+              <button class="ioc-chip" data-t="md5">MD5</button>
+              <button class="ioc-chip" data-t="sha256">SHA-256</button>
+              <button class="ioc-chip" data-t="url">URL</button>
+              <button class="ioc-chip" data-t="email">Email</button>
+            </div>
+            <div style="margin-top:12px;">
+              <label for="regex-pattern">Pattern (RE2-compatible)</label>
+              <input id="regex-pattern" type="text" placeholder="e.g. \b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b" spellcheck="false">
+            </div>
+          </div>
+          <div>
+            <label for="regex-input">Sample text to test against</label>
+            <textarea id="regex-input" placeholder="Paste raw log/paste/forum text here…" spellcheck="false"></textarea>
+          </div>
+        </div>
+        <button class="icon-btn" id="regex-test-btn" type="button">▶ Test pattern</button>
+        <div id="regex-result" style="display:none;"></div>
+      </div>
+    </div>
+
+    <div class="tab-panel" id="tab-feeds">
+      <div class="section-head">
+        <h2>Threat feed management <span id="feeds-count"></span></h2>
+        <button class="icon-btn" id="feeds-refresh-btn" type="button">↻ Refresh</button>
+      </div>
+      <div class="alert-table">
+        <table class="feed-table">
+          <thead><tr><th>Feed</th><th>Type</th><th>Tags</th><th>Last polled</th><th>Enabled</th></tr></thead>
+          <tbody id="feeds-rows"><tr><td colspan="5" class="loading">loading feeds…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="tab-panel" id="tab-compliance">
+      <div class="section-head"><h2>Compliance exports</h2></div>
+      <div class="sla-metric-row" id="sla-metrics">
+        <div class="sla-metric"><div class="n" id="sla-total">–</div><div class="l">total alerts</div></div>
+        <div class="sla-metric"><div class="n" id="sla-critical">–</div><div class="l">critical</div></div>
+        <div class="sla-metric"><div class="n" id="sla-resolved">–</div><div class="l">resolved</div></div>
+        <div class="sla-metric"><div class="n" id="sla-mttr">–</div><div class="l">avg. MTTR</div></div>
+        <div class="sla-metric"><div class="n" id="sla-pct">–</div><div class="l">SLA compliance</div></div>
+      </div>
+      <div>
+        <button class="export-btn" id="export-alerts-btn" type="button">⬇ Export alerts (CSV)</button>
+        <button class="export-btn" id="export-audit-btn" type="button">⬇ Export audit log (CSV)</button>
+        <button class="export-btn" id="export-report-btn" type="button">⬇ SLA / MTTR report (JSON)</button>
+      </div>
+      <div id="compliance-msg" class="widget-empty" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="tab-panel" id="tab-docs">
+      <div class="section-head"><h2>API documentation</h2></div>
+      <div class="widget full">
+        <p style="color:var(--text-dim); font-size:12.5px; line-height:1.6; margin:0 0 12px;">
+          CyberNom exposes a versioned JSON REST API under <code>/api/v1</code>, protected by the
+          same bearer-token auth as this dashboard. An interactive OpenAPI/Swagger explorer is
+          served alongside it for building custom integrations.
+        </p>
+        <iframe src="/api/v1/docs" title="CyberNom API documentation"
+          style="width:100%; height:600px; border:1.5px solid var(--frame); border-radius:4px; background:#fff;"></iframe>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  const API = "/api/v1";
+  const REFRESH_MS = 20000;
+
+  const $ = (sel) => document.querySelector(sel);
+  const loginView = $("#login-view");
+  const appView = $("#app-view");
+  const loginForm = $("#login-form");
+  const loginError = $("#login-error");
+  const loginSubmit = $("#login-submit");
+  const rowsEl = $("#rows");
+  const connPill = $("#conn-pill");
+  const connLabel = $("#conn-label");
+  const lastSync = $("#last-sync");
+  const visibleCount = $("#visible-count");
+  const daysBtn = $("#days-btn");
+  const themeToggle = $("#theme-toggle");
+
+  let accessToken = sessionStorage.getItem("cybernom_access_token") || null;
+  let refreshToken = sessionStorage.getItem("cybernom_refresh_token") || null;
+  let activeFilter = "";
+  let activeDays = 7;
+  let refreshTimer = null;
+  let seenCriticalIds = new Set(); // tracks which critical alerts we've already sounded an audio alert for
+  let firstAlertPoll = true; // suppress audio on the very first poll after login (don't blast sound for pre-existing criticals)
+
+  let charts = { sev:null, status:null, sla:null, trend:null, source:null };
+
+  function showApp(){
+    loginView.style.display = "none";
+    appView.style.display = "block";
+    seenCriticalIds = new Set();
+    firstAlertPoll = true;
+    startPolling();
+  }
+  function showLogin(message){
+    stopPolling();
+    accessToken = null; refreshToken = null;
+    sessionStorage.removeItem("cybernom_access_token");
+    sessionStorage.removeItem("cybernom_refresh_token");
+    appView.style.display = "none";
+    loginView.style.display = "flex";
+    if (message){
+      loginError.textContent = message;
+      loginError.style.display = "block";
+    }
+  }
+
+  async function api(path, opts){
+    opts = opts || {};
+    opts.headers = Object.assign({}, opts.headers, {
+      "Authorization": "Bearer " + accessToken
+    });
+    let res = await fetch(API + path, opts);
+    if (res.status === 401 && refreshToken){
+      const refreshed = await tryRefresh();
+      if (refreshed){
+        opts.headers["Authorization"] = "Bearer " + accessToken;
+        res = await fetch(API + path, opts);
+      }
+    }
+    return res;
+  }
+
+  async function tryRefresh(){
+    try{
+      const res = await fetch(API + "/auth/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken })
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      accessToken = data.access_token;
+      sessionStorage.setItem("cybernom_access_token", accessToken);
+      return true;
+    }catch(e){ return false; }
+  }
+
+  loginForm.addEventListener("submit", async function(e){
+    e.preventDefault();
+    loginError.style.display = "none";
+    loginSubmit.disabled = true;
+    loginSubmit.textContent = "Signing in…";
+    try{
+      const res = await fetch(API + "/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: $("#username").value,
+          password: $("#password").value
+        })
+      });
+      if (!res.ok){
+        loginError.textContent = "Invalid username or password.";
+        loginError.style.display = "block";
+        return;
+      }
+      const data = await res.json();
+      accessToken = data.access_token;
+      refreshToken = data.refresh_token;
+      sessionStorage.setItem("cybernom_access_token", accessToken);
+      sessionStorage.setItem("cybernom_refresh_token", refreshToken);
+      showApp();
+    }catch(err){
+      loginError.textContent = "Could not reach the server.";
+      loginError.style.display = "block";
+    }finally{
+      loginSubmit.disabled = false;
+      loginSubmit.textContent = "Sign in";
+    }
+  });
+
+  $("#logout-btn").addEventListener("click", function(){
+    showLogin();
+  });
+
+  // --- Dark/light mode toggle ---
+  // Dark is the default (no data-theme attribute = dark palette, see CSS)
+  // to reduce eye strain for analysts running this on a 24/7 SOC wall
+  // display; the toggle persists the explicit choice across reloads.
+  (function initTheme(){
+    const saved = localStorage.getItem("cybernom_theme");
+    if (saved === "light"){
+      document.documentElement.setAttribute("data-theme", "light");
+      themeToggle.textContent = "☀️";
+    }
+  })();
+  themeToggle.addEventListener("click", function(){
+    const isLight = document.documentElement.getAttribute("data-theme") === "light";
+    if (isLight){
+      document.documentElement.removeAttribute("data-theme");
+      localStorage.setItem("cybernom_theme", "dark");
+      themeToggle.textContent = "🌙";
+    } else {
+      document.documentElement.setAttribute("data-theme", "light");
+      localStorage.setItem("cybernom_theme", "light");
+      themeToggle.textContent = "☀️";
+    }
+  });
+
+  // --- Nav tabs ---
+  $("#nav-tabs").addEventListener("click", function(e){
+    const btn = e.target.closest("button[data-tab]");
+    if (!btn) return;
+    const tab = btn.getAttribute("data-tab");
+    document.querySelectorAll(".nav-tab").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+    $("#tab-" + tab).classList.add("active");
+    if (tab === "feeds") loadFeeds();
+    if (tab === "compliance") loadComplianceReport();
+  });
+
+  // --- Critical alert audio cue ---
+  // Uses the Web Audio API to synthesize a short, subtle two-tone chime
+  // rather than shipping a binary asset — keeps the dashboard a single
+  // self-contained HTML file with no additional static files to embed.
+  // Browsers block audio before any user gesture on the page; login
+  // counts as that gesture, so this reliably works once signed in.
+  let audioCtx = null;
+  function playCriticalChime(){
+    try{
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      const now = audioCtx.currentTime;
+      [880, 660].forEach(function(freq, i){
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        const start = now + i * 0.14;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.22, start + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
+        osc.start(start);
+        osc.stop(start + 0.18);
+      });
+    }catch(e){ /* audio unsupported/blocked — fail silently, never break polling */ }
+  }
+
+  $("#filters").addEventListener("click", function(e){
+    const btn = e.target.closest("button[data-sev]");
+    if (!btn) return;
+    activeFilter = btn.getAttribute("data-sev");
+    [...$("#filters").children].forEach(b => b.classList.toggle("active", b === btn));
+    fetchAlerts();
+  });
+
+  daysBtn.addEventListener("click", function(){
+    activeDays = activeDays === 7 ? 14 : activeDays === 14 ? 30 : 7;
+    daysBtn.textContent = "⏱ Last " + activeDays + " days";
+    fetchMetrics();
+  });
+
+  function setConn(state){
+    connPill.className = "env-pill" + (state === "down" ? " down" : "");
+    connLabel.textContent = state === "live" ? "Live" : state === "down" ? "Disconnected" : "Connecting…";
+  }
+
+  function timeAgo(iso){
+    const d = new Date(iso);
+    const secs = Math.max(0, Math.floor((Date.now() - d.getTime())/1000));
+    if (secs < 60) return secs + "s ago";
+    if (secs < 3600) return Math.floor(secs/60) + "m ago";
+    if (secs < 86400) return Math.floor(secs/3600) + "h ago";
+    return Math.floor(secs/86400) + "d ago";
+  }
+
+  function absTime(iso){
+    return new Date(iso).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  }
+
+  function escapeHtml(s){
+    const div = document.createElement("div");
+    div.textContent = s == null ? "" : String(s);
+    return div.innerHTML;
+  }
+
+  // escapeHtml only entity-encodes text — it does not validate URL schemes,
+  // so a feed item whose URL is "javascript:..." would pass through
+  // unchanged (no HTML-special characters to escape) and execute when
+  // clicked. Feed content is adversarial input (see docs/THREAT_MODEL.md),
+  // so any URL rendered into an href must go through this allowlist first.
+  function safeUrl(u){
+    if (u == null) return "";
+    const s = String(u).trim();
+    try {
+      // Resolve against the current origin so relative URLs (e.g.
+      // "/report.pdf") are handled the same way a browser would.
+      const parsed = new URL(s, window.location.href);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:"){
+        return parsed.href;
+      }
+    } catch (e) {
+      // Unparseable — fall through to returning "" below.
+    }
+    return "";
+  }
+
+  function renderAlerts(alerts){
+    if (!alerts || alerts.length === 0){
+      rowsEl.innerHTML = '<div class="empty"><div class="big">No alerts match this view</div>' +
+        'The ingester hasn\'t triggered any matching keywords yet, or everything here is resolved.</div>';
+      visibleCount.textContent = "";
+      return;
+    }
+
+    visibleCount.textContent = "(" + alerts.length + " results)";
+
+    rowsEl.innerHTML = alerts.map(function(a){
+      const sev = (a.severity || "low").toLowerCase();
+      const tags = (a.tags || []).map(t => '<span class="tag">' + escapeHtml(t) + "</span>").join("");
+      const resolvedClass = a.status === "resolved" ? " resolved" : "";
+      const safeItemUrl = safeUrl(a.item_url);
+      const linkHtml = safeItemUrl
+        ? '<a href="' + escapeHtml(safeItemUrl) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(a.item_title || a.item_url) + "</a>"
+        : escapeHtml(a.item_title || "(untitled item)");
+
+      let actions;
+      if (a.status === "resolved"){
+        actions = '<span class="ack-label">resolved</span>';
+      } else if (a.status === "in_triage"){
+        actions = '<button class="resolve-btn" data-resolve="' + escapeHtml(a.id) + '">Resolve</button>';
+      } else {
+        actions = '<button class="ack-btn" data-ack="' + escapeHtml(a.id) + '">Acknowledge</button>' +
+                   '<button class="resolve-btn" data-resolve="' + escapeHtml(a.id) + '">Resolve</button>';
+      }
+
+      return (
+        '<div class="at-row' + resolvedClass + '" data-id="' + escapeHtml(a.id) + '">' +
+          '<div><span class="sev-chip ' + sev + '">' + escapeHtml(sev) + '</span></div>' +
+          '<div class="at-main">' +
+            '<div class="kw">' + escapeHtml(a.keyword_name) + tags + '</div>' +
+            '<div class="title">' + linkHtml + '</div>' +
+          '</div>' +
+          '<div class="source-cell">' + escapeHtml(a.source_feed) + '<div class="sub">' + escapeHtml(a.status.replace('_',' ')) + '</div></div>' +
+          '<div class="time-cell"><div class="rel">' + timeAgo(a.created_at) + '</div>' + absTime(a.created_at) + '</div>' +
+          '<div class="action-cell">' + actions + '</div>' +
+        '</div>'
+      );
+    }).join("");
+  }
+
+  rowsEl.addEventListener("click", async function(e){
+    const ackBtn = e.target.closest("button[data-ack]");
+    const resolveBtn = e.target.closest("button[data-resolve]");
+    if (ackBtn){
+      await doAction(ackBtn, "/alerts/" + encodeURIComponent(ackBtn.getAttribute("data-ack")) + "/ack");
+    } else if (resolveBtn){
+      await doAction(resolveBtn, "/alerts/" + encodeURIComponent(resolveBtn.getAttribute("data-resolve")) + "/resolve");
+    }
+  });
+
+  async function doAction(btn, path){
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = "…";
+    try{
+      const res = await api(path, { method: "POST" });
+      if (res.ok){
+        fetchAlerts();
+        fetchMetrics();
+      } else {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    }catch(err){
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+
+  async function fetchAlerts(){
+    try{
+      const qs = activeFilter ? ("?severity=" + encodeURIComponent(activeFilter) + "&limit=200") : "?limit=200";
+      const res = await api("/alerts" + qs);
+      if (res.status === 401){
+        showLogin("Session expired — please sign in again.");
+        return;
+      }
+      if (!res.ok) throw new Error("bad status " + res.status);
+      const data = await res.json();
+      checkForNewCriticalAlerts(data || []);
+      renderAlerts(data || []);
+      setConn("live");
+      lastSync.textContent = "synced " + new Date().toLocaleTimeString();
+    }catch(err){
+      setConn("down");
+    }
+  }
+
+  // Fires the audio cue for any critical, unresolved alert not previously
+  // seen this session. Runs on every 20s poll cycle (REFRESH_MS above),
+  // matching the requirement that new Critical alerts trigger a sound
+  // during the live dashboard's poll cycle.
+  function checkForNewCriticalAlerts(alerts){
+    const currentCriticalIds = new Set();
+    let hasNew = false;
+    (alerts || []).forEach(function(a){
+      if ((a.severity || "").toLowerCase() !== "critical" || a.status === "resolved") return;
+      currentCriticalIds.add(a.id);
+      if (!seenCriticalIds.has(a.id)) hasNew = true;
+    });
+    if (hasNew && !firstAlertPoll){
+      playCriticalChime();
+    }
+    seenCriticalIds = currentCriticalIds;
+    firstAlertPoll = false;
+  }
+
+  if (window.Chart){
+    Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, Segoe UI, Inter, sans-serif";
+    Chart.defaults.color = "#808A9C";
+  }
+
+  function donut(key, canvasId, data, colors){
+    if (!window.Chart) return;
+    if (charts[key]) charts[key].destroy();
+    charts[key] = new Chart(document.getElementById(canvasId), {
+      type: 'doughnut',
+      data: { datasets: [{ data, backgroundColor: colors, borderWidth: 0, spacing: 2 }] },
+      options: {
+        cutout: '72%',
+        plugins: { legend: { display:false }, tooltip: { enabled:false } },
+        animation: { duration: 400 }
+      }
+    });
+  }
+
+  function renderCategoryBars(categories){
+    const listEl = document.getElementById("cat-list");
+    if (!categories || categories.length === 0){
+      listEl.innerHTML = '<div class="widget-empty">No open alerts to categorize yet.</div>';
+      return;
+    }
+    const palette = ["var(--medium)", "var(--critical)", "var(--high)", "var(--accent)", "var(--exfil)", "var(--low)", "var(--ok)", "var(--network)"];
+    const max = Math.max.apply(null, categories.map(c => c.count));
+    listEl.innerHTML = categories.map(function(c, i){
+      const pct = max > 0 ? Math.max(6, Math.round((c.count / max) * 100)) : 0;
+      const color = palette[i % palette.length];
+      return '<div class="cat-row">' +
+        '<span class="label">' + escapeHtml(c.category) + '</span>' +
+        '<div class="cat-track"><span style="width:' + pct + '%;background:' + color + '"></span></div>' +
+        '<span class="val">' + c.count + '</span>' +
+      '</div>';
+    }).join("");
+  }
+
+  function renderTrend(days){
+    if (!window.Chart) return;
+    const labels = days.map(d => {
+      const dt = new Date(d.date + "T00:00:00");
+      return dt.toLocaleDateString([], { month:'short', day:'numeric' });
+    });
+    const values = days.map(d => d.count);
+    const total = values.reduce((a,b) => a+b, 0);
+    $("#trend-total").textContent = total.toLocaleString();
+
+    const half = Math.floor(values.length / 2) || 1;
+    const recent = values.slice(-half).reduce((a,b)=>a+b,0);
+    const prior = values.slice(0, values.length - half).reduce((a,b)=>a+b,0) || 1;
+    const pct = Math.round(((recent - prior) / prior) * 100);
+    const deltaEl = $("#trend-delta");
+    if (pct > 0){ deltaEl.className = "delta up"; deltaEl.textContent = "↑ " + pct + "% vs prior period"; }
+    else if (pct < 0){ deltaEl.className = "delta down"; deltaEl.textContent = "↓ " + Math.abs(pct) + "% vs prior period"; }
+    else { deltaEl.className = "delta flat"; deltaEl.textContent = "flat vs prior period"; }
+
+    if (charts.trend) charts.trend.destroy();
+    charts.trend = new Chart(document.getElementById('line-detect'), {
+      type:'line',
+      data:{
+        labels,
+        datasets:[{
+          data: values,
+          borderColor:'#6B8CB8', backgroundColor:'rgba(107,140,184,0.10)',
+          fill:true, tension:.35, pointRadius:0, borderWidth:2
+        }]
+      },
+      options:{
+        plugins:{legend:{display:false}},
+        scales:{
+          x:{grid:{color:'#212632'},ticks:{font:{size:10}}},
+          y:{grid:{color:'#212632'},ticks:{font:{size:10}}, beginAtZero:true}
+        }
+      }
+    });
+  }
+
+  const SOURCE_COLORS = {
+    "Forums": "#6FA3D8",
+    "Pastes": "#9B7FD1",
+    "Telegram": "#D9A441",
+    "Code hosts": "#3FB876",
+    "Other": "#5B6472"
+  };
+
+  function renderSourceVolume(rows){
+    if (!window.Chart) return;
+    const dates = [...new Set(rows.map(r => r.date))].sort();
+    const categories = Object.keys(SOURCE_COLORS);
+    const byDayCategory = {};
+    rows.forEach(r => { byDayCategory[r.date + "|" + r.category] = r.count; });
+
+    const labels = dates.map(d => {
+      const dt = new Date(d + "T00:00:00");
+      return dt.toLocaleDateString([], { month:'short', day:'numeric' });
+    });
+    const datasets = categories.map(cat => ({
+      label: cat,
+      data: dates.map(d => byDayCategory[d + "|" + cat] || 0),
+      backgroundColor: SOURCE_COLORS[cat]
+    }));
+
+    if (charts.source) charts.source.destroy();
+    charts.source = new Chart(document.getElementById('bar-stack'), {
+      type:'bar',
+      data:{ labels, datasets },
+      options:{
+        plugins:{legend:{display:false}},
+        scales:{
+          x:{stacked:true, grid:{display:false},ticks:{font:{size:10}}},
+          y:{stacked:true, grid:{color:'#212632'},ticks:{font:{size:10}}}
+        }
+      }
+    });
+  }
+
+  async function fetchMetrics(){
+    try{
+      $("#trend-range-label").textContent = activeDays + " days";
+      const res = await api("/dashboard-metrics?days=" + activeDays);
+      if (res.status === 401){
+        showLogin("Session expired — please sign in again.");
+        return;
+      }
+      if (!res.ok) throw new Error("bad status " + res.status);
+      const m = await res.json();
+
+      const sev = m.severity || {};
+      const sevTotal = (sev.critical||0)+(sev.high||0)+(sev.medium||0)+(sev.low||0);
+      $("#d-sev-total").textContent = sevTotal;
+      donut('sev', 'd-sev', [sev.critical||0, sev.high||0, sev.medium||0, sev.low||0], ['#D64F45','#DB7B42','#D9A441','#5B6472']);
+      updateLegend('#d-sev-legend', [sev.critical||0, sev.high||0, sev.medium||0, sev.low||0]);
+
+      const st = m.status || {};
+      const stTotal = (st.new||0)+(st.in_triage||0)+(st.resolved||0);
+      $("#d-status-total").textContent = stTotal;
+      donut('status', 'd-status', [st.new||0, st.in_triage||0, st.resolved||0], ['#6FA3D8','#D9A441','#3FB876']);
+      updateLegend('#d-status-legend', [st.new||0, st.in_triage||0, st.resolved||0]);
+
+      const sla = m.sla || {};
+      $("#d-sla-pct").textContent = Math.round(sla.percent_met || 0) + "%";
+      donut('sla', 'd-sla', [sla.met||0, sla.breached||0], ['#3FB876','#D64F45']);
+      updateLegend('#d-sla-legend', [sla.met||0, sla.breached||0]);
+
+      renderCategoryBars(m.categories || []);
+      renderTrend(m.detection_trend || []);
+      renderSourceVolume(m.source_volume || []);
+    }catch(err){
+      setConn("down");
+    }
+  }
+
+  function updateLegend(sel, values){
+    const items = document.querySelectorAll(sel + " > div");
+    items.forEach((item, i) => {
+      const b = item.querySelector("b");
+      if (b) b.textContent = values[i] != null ? values[i] : "–";
+    });
+  }
+
+  function startPolling(){
+    fetchAlerts();
+    fetchMetrics();
+    stopPolling();
+    refreshTimer = setInterval(function(){
+      fetchAlerts();
+      fetchMetrics();
+    }, REFRESH_MS);
+  }
+  function stopPolling(){
+    if (refreshTimer){ clearInterval(refreshTimer); refreshTimer = null; }
+  }
+
+  // --- Regex Builder / IOC Playground ---
+  // Client-side only: JS RegExp and Go's RE2 (used server-side for actual
+  // keyword rules) share the same practical syntax for these IOC patterns,
+  // so this gives analysts immediate, safe feedback without a round trip —
+  // and, crucially, without ever executing an unbounded/catastrophic
+  // pattern server-side.
+  const IOC_TEMPLATES = {
+    ipv4:   String.raw`\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b`,
+    domain: String.raw`\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b`,
+    md5:    String.raw`\b[a-fA-F0-9]{32}\b`,
+    sha256: String.raw`\b[a-fA-F0-9]{64}\b`,
+    url:    String.raw`https?://[^\s"'<>]+`,
+    email:  String.raw`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`
+  };
+
+  function applyTemplate(key){
+    if (!IOC_TEMPLATES[key]) return;
+    $("#regex-pattern").value = IOC_TEMPLATES[key];
+    $("#regex-template").value = key;
+    runRegexTest();
+  }
+  $("#regex-template").addEventListener("change", function(){ applyTemplate(this.value); });
+  document.querySelectorAll(".ioc-chip").forEach(function(chip){
+    chip.addEventListener("click", function(){ applyTemplate(chip.getAttribute("data-t")); });
+  });
+  $("#regex-test-btn").addEventListener("click", runRegexTest);
+
+  function runRegexTest(){
+    const pattern = $("#regex-pattern").value;
+    const input = $("#regex-input").value;
+    const resultEl = $("#regex-result");
+    resultEl.style.display = "block";
+    if (!pattern){
+      resultEl.className = "regex-result err";
+      resultEl.textContent = "Enter or select a pattern first.";
+      return;
+    }
+    try{
+      const re = new RegExp(pattern, "g");
+      const matches = [...input.matchAll(re)].map(m => m[0]);
+      if (matches.length === 0){
+        resultEl.className = "regex-result err";
+        resultEl.textContent = "✓ Pattern compiled, but found 0 matches in the sample text.";
+      } else {
+        resultEl.className = "regex-result ok";
+        resultEl.textContent = "✓ " + matches.length + " match(es):\n" + matches.map(m => "  • " + m).join("\n");
+      }
+    }catch(err){
+      resultEl.className = "regex-result err";
+      resultEl.textContent = "✗ Syntax error: " + err.message;
+    }
+  }
+
+  // --- Threat feed management ---
+  async function loadFeeds(){
+    const tbody = $("#feeds-rows");
+    tbody.innerHTML = '<tr><td colspan="5" class="loading">loading feeds…</td></tr>';
+    try{
+      const res = await api("/feeds");
+      if (!res.ok){
+        tbody.innerHTML = '<tr><td colspan="5" class="widget-empty">Could not load feeds (' + res.status + ').</td></tr>';
+        return;
+      }
+      const feeds = await res.json() || [];
+      $("#feeds-count").textContent = "(" + feeds.length + ")";
+      if (feeds.length === 0){
+        tbody.innerHTML = '<tr><td colspan="5" class="widget-empty">No feeds configured yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = feeds.map(function(f){
+        const tags = (f.tags || []).join(", ");
+        const lastPolled = f.last_polled_at ? timeAgo(f.last_polled_at) : "never";
+        return '<tr data-feed-id="' + escapeHtml(f.id) + '">' +
+          '<td>' + escapeHtml(f.name) + '</td>' +
+          '<td>' + escapeHtml(f.feed_type) + '</td>' +
+          '<td>' + escapeHtml(tags) + '</td>' +
+          '<td>' + escapeHtml(lastPolled) + '</td>' +
+          '<td><button class="feed-toggle' + (f.enabled ? ' on' : '') + '" data-enabled="' + (f.enabled ? "true" : "false") + '" title="Toggle feed"></button></td>' +
+        '</tr>';
+      }).join("");
+    }catch(err){
+      tbody.innerHTML = '<tr><td colspan="5" class="widget-empty">Could not reach the server.</td></tr>';
+    }
+  }
+  $("#feeds-refresh-btn").addEventListener("click", loadFeeds);
+  $("#feeds-rows").addEventListener("click", async function(e){
+    const btn = e.target.closest("button.feed-toggle");
+    if (!btn) return;
+    const row = btn.closest("tr");
+    const feedId = row.getAttribute("data-feed-id");
+    const nextEnabled = btn.getAttribute("data-enabled") !== "true";
+    btn.disabled = true;
+    try{
+      const res = await api("/feeds/" + encodeURIComponent(feedId) + "/enabled?enabled=" + nextEnabled, { method: "PUT" });
+      if (res.ok){
+        btn.classList.toggle("on", nextEnabled);
+        btn.setAttribute("data-enabled", nextEnabled ? "true" : "false");
+      }
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // --- Compliance exports ---
+  // Downloads are triggered via an authenticated fetch + Blob rather than a
+  // plain <a href> so the Bearer token can be attached (these endpoints
+  // don't accept a query-string token, matching this app's convention of
+  // never putting credentials in URLs / server logs).
+  async function downloadExport(path, filename){
+    const msg = $("#compliance-msg");
+    msg.textContent = "Preparing download…";
+    try{
+      const res = await api(path);
+      if (!res.ok){
+        msg.textContent = "Export failed (status " + res.status + "). You may not have permission for this export.";
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      msg.textContent = "Downloaded " + filename;
+    }catch(err){
+      msg.textContent = "Could not reach the server.";
+    }
+  }
+  $("#export-alerts-btn").addEventListener("click", function(){
+    downloadExport("/export/alerts.csv", "cybernom-alerts.csv");
+  });
+  $("#export-audit-btn").addEventListener("click", function(){
+    downloadExport("/export/audit.csv", "cybernom-audit.csv");
+  });
+  $("#export-report-btn").addEventListener("click", function(){
+    downloadExport("/export/report.json", "cybernom-report.json");
+  });
+
+  async function loadComplianceReport(){
+    try{
+      const res = await api("/export/report.json");
+      if (!res.ok) return;
+      const r = await res.json();
+      $("#sla-total").textContent = r.total_alerts != null ? r.total_alerts : "–";
+      $("#sla-critical").textContent = r.critical_alerts != null ? r.critical_alerts : "–";
+      $("#sla-resolved").textContent = r.resolved_alerts != null ? r.resolved_alerts : "–";
+      $("#sla-mttr").textContent = r.average_mttr || "–";
+      $("#sla-pct").textContent = r.sla_compliance_percent != null ? Math.round(r.sla_compliance_percent) + "%" : "–";
+    }catch(err){ /* leave metric cards at their default "–" on failure */ }
+  }
+
+  if (accessToken){ showApp(); } else { showLogin(); }
+})();
+</script>
+</body>
+</html>

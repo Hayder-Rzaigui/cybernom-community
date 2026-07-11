@@ -1,0 +1,156 @@
+# CyberNom configuration
+#
+# NON-SECRET structural config only. All secrets (DB password, JWT signing
+# key, webhook URLs, SMTP password, Graph client secret) are supplied via
+# environment variables named below — see .env.example. This file is safe
+# to commit to version control as-is.
+
+server:
+  listen_address: "127.0.0.1:8080"   # bind to loopback; put nginx/a reverse proxy in front (see deployments/nginx)
+  read_timeout: 15s
+  write_timeout: 15s
+  shutdown_timeout: 10s
+  rate_limit_rps: 5
+  trust_proxy_headers: false          # set true ONLY when a trusted reverse proxy is guaranteed to be the sole entry point
+
+database:
+  host: "localhost"
+  port: 5432
+  name: "cybernom"
+  user: "cybernom"
+  password_env_var: "CYBERNOM_DB_PASSWORD"
+  ssl_mode: "prefer"
+  max_open_conns: 10
+
+auth:
+  jwt_signing_key_env_var: "CYBERNOM_JWT_SIGNING_KEY"   # generate with: openssl rand -hex 32
+  access_token_ttl: 15m
+  refresh_token_ttl: 168h
+  bcrypt_cost: 12
+
+tor:
+  proxy_address: "tor:9050"           # SOCKS5 proxy, used exclusively for feeds of type "onion"
+  dial_timeout: 30s
+
+regex_safety:
+  max_pattern_length: 512
+  max_input_length: 1048576           # 1 MiB per item evaluated
+  compile_timeout: 2s
+  exec_timeout: 2s
+
+# Microsoft Graph read-only collector (M365 posture visibility).
+# Every scope MUST end in ".Read.All" — anything else fails validation at
+# startup. See docs/THREAT_MODEL.md for the full permission rationale.
+graph:
+  enabled: false
+  tenant_id: "00000000-0000-0000-0000-000000000000"
+  client_id: "00000000-0000-0000-0000-000000000000"
+  client_secret_env_var: "CYBERNOM_GRAPH_CLIENT_SECRET"
+  poll_interval: 10m
+  scopes:
+    - "SecurityAlert.Read.All"
+    - "IdentityRiskyUser.Read.All"
+    - "SecurityEvents.Read.All"
+    - "Directory.Read.All"
+
+notifications:
+  - type: discord
+    enabled: false
+    min_severity: high
+    webhook_env_var: "CYBERNOM_DISCORD_WEBHOOK"
+
+  - type: slack
+    enabled: false
+    min_severity: high
+    webhook_env_var: "CYBERNOM_SLACK_WEBHOOK"
+
+  - type: telegram
+    enabled: false
+    min_severity: high
+    bot_token_env_var: "CYBERNOM_TELEGRAM_BOT_TOKEN"
+    chat_id_env_var: "CYBERNOM_TELEGRAM_CHAT_ID"
+
+  - type: email
+    enabled: false
+    min_severity: critical
+    smtp:
+      host: "smtp.example.com"
+      port: 587
+      username: "alerts@example.com"
+      password_env_var: "CYBERNOM_SMTP_PASSWORD"
+      from: "CyberNom <alerts@example.com>"
+      to:
+        - "secteam@example.com"
+      use_tls: true
+
+# --- Keyword alerting rules ---
+# is_regex: false => plain substring match (fast, no ReDoS surface at all)
+# is_regex: true  => RE2-compiled pattern; see docs/THREAT_MODEL.md for why
+#                     this is structurally safe against catastrophic backtracking
+keywords:
+  - name: "Ransomware mention"
+    pattern: "ransomware"
+    is_regex: false
+    case_sensitive: false
+    severity: high
+    tags: ["ransomware"]
+
+  - name: "Zero-day disclosure"
+    pattern: "zero-day|0-day|CVE-\\d{4}-\\d{4,7}"
+    is_regex: true
+    case_sensitive: false
+    severity: critical
+    tags: ["vulnerability", "cve"]
+
+  - name: "Company brand mention"
+    pattern: "YourCompanyName"
+    is_regex: false
+    case_sensitive: false
+    severity: medium
+    tags: ["brand"]
+
+  - name: "Credential dump"
+    pattern: "(credential|password)\\s+(dump|leak|breach)"
+    is_regex: true
+    case_sensitive: false
+    severity: critical
+    tags: ["credentials", "leak"]
+
+# --- Feeds: 24 pre-built sources across RSS, API, website, and .onion ---
+feeds:
+  # -- RSS: vendor & CERT advisories --
+  - { name: "CISA Advisories",            type: rss,     url: "https://www.cisa.gov/cybersecurity-advisories/all.xml",                enabled: true, poll_interval: 30m, tags: ["advisory","gov"] }
+  - { name: "US-CERT Alerts",             type: rss,     url: "https://www.cisa.gov/uscert/ncas/alerts.xml",                          enabled: true, poll_interval: 30m, tags: ["advisory","gov"] }
+  - { name: "Microsoft MSRC",             type: rss,     url: "https://api.msrc.microsoft.com/update-guide/rss",                      enabled: true, poll_interval: 30m, tags: ["advisory","microsoft"] }
+  - { name: "Google Project Zero",        type: rss,     url: "https://googleprojectzero.blogspot.com/feeds/posts/default",           enabled: true, poll_interval: 1h,  tags: ["research"] }
+  - { name: "Krebs on Security",          type: rss,     url: "https://krebsonsecurity.com/feed/",                                    enabled: true, poll_interval: 1h,  tags: ["news"] }
+  - { name: "The Hacker News",            type: rss,     url: "https://feeds.feedburner.com/TheHackersNews",                          enabled: true, poll_interval: 30m, tags: ["news"] }
+  - { name: "BleepingComputer",           type: rss,     url: "https://www.bleepingcomputer.com/feed/",                               enabled: true, poll_interval: 30m, tags: ["news"] }
+  - { name: "Dark Reading",               type: rss,     url: "https://www.darkreading.com/rss.xml",                                  enabled: true, poll_interval: 1h,  tags: ["news"] }
+  - { name: "SANS ISC Diary",             type: rss,     url: "https://isc.sans.edu/rssfeed_full.xml",                                enabled: true, poll_interval: 1h,  tags: ["research"] }
+  - { name: "Talos Intelligence",         type: rss,     url: "https://blog.talosintelligence.com/rss/",                              enabled: true, poll_interval: 1h,  tags: ["research","cisco"] }
+  - { name: "Mandiant Blog",              type: rss,     url: "https://www.mandiant.com/resources/blog/rss.xml",                      enabled: true, poll_interval: 1h,  tags: ["research"] }
+  - { name: "Unit 42 (Palo Alto)",        type: rss,     url: "https://unit42.paloaltonetworks.com/feed/",                            enabled: true, poll_interval: 1h,  tags: ["research"] }
+  - { name: "Recorded Future Blog",       type: rss,     url: "https://www.recordedfuture.com/feed",                                  enabled: true, poll_interval: 1h,  tags: ["research"] }
+  - { name: "NIST NVD Recent CVEs",       type: rss,     url: "https://nvd.nist.gov/feeds/xml/cve/misc/nvd-rss.xml",                  enabled: true, poll_interval: 30m, tags: ["cve","gov"] }
+  - { name: "Exploit-DB Recent",          type: rss,     url: "https://www.exploit-db.com/rss.xml",                                   enabled: true, poll_interval: 1h,  tags: ["exploit"] }
+  - { name: "Have I Been Pwned Latest",   type: rss,     url: "https://haveibeenpwned.com/rss",                                       enabled: true, poll_interval: 6h,  tags: ["breach"] }
+
+  # -- API: structured threat intel sources --
+  - { name: "CISA KEV Catalog",           type: api,     url: "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json", enabled: true, poll_interval: 1h, tags: ["kev","gov"], api_data_path: "vulnerabilities", api_method: "GET" }
+  - { name: "AbuseIPDB Blacklist",        type: api,     url: "https://api.abuseipdb.com/api/v2/blacklist",                          enabled: false, poll_interval: 6h, tags: ["ioc"], api_auth_header: "Key", api_auth_env_var: "CYBERNOM_ABUSEIPDB_KEY", api_data_path: "data" }
+  - { name: "URLhaus Recent",             type: api,     url: "https://urlhaus-api.abuse.ch/v1/urls/recent/",                        enabled: true, poll_interval: 1h, tags: ["ioc","malware"], api_data_path: "urls" }
+
+  # -- Website: pages without a feed --
+  - { name: "CISA Shields Up",            type: website, url: "https://www.cisa.gov/shields-up",                                      enabled: true, poll_interval: 6h,  tags: ["advisory"] }
+  - { name: "Vendor Security Bulletin",   type: website, url: "https://example-vendor.com/security/bulletins",                        enabled: false, poll_interval: 6h,  tags: ["vendor"] }
+
+  # -- .onion: dark web monitoring, routed exclusively through Tor --
+  - { name: "Onion Forum Monitor A",      type: onion,   url: "http://exampleoniondomainxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.onion", enabled: false, poll_interval: 6h, tags: ["darkweb"], require_tor: true }
+  - { name: "Onion Marketplace Monitor",  type: onion,   url: "http://exampleoniondomainyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy.onion", enabled: false, poll_interval: 6h, tags: ["darkweb"], require_tor: true }
+  - { name: "Onion Leak Site Monitor",    type: onion,   url: "http://exampleoniondomainzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz.onion", enabled: false, poll_interval: 6h, tags: ["darkweb","leak"], require_tor: true }
+
+# NOTE: the three .onion entries above use placeholder addresses and are
+# disabled by default. Replace with real, vetted sources relevant to your
+# organization before enabling — see docs/THREAT_MODEL.md for guidance on
+# safely operating dark-web monitoring feeds.

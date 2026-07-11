@@ -1,0 +1,47 @@
+# Example reverse proxy in front of CyberNom.
+#
+# This terminates TLS, rate-limits at the network edge (defense in depth on
+# top of CyberNom's own per-IP limiter), and is the ONLY container in the
+# compose stack exposed to the host. Copy this to nginx.conf, drop a real
+# cert/key into ./certs/, and adjust server_name.
+#
+# Optional extra layer: uncomment the auth_basic lines to require an
+# additional shared credential before a request even reaches CyberNom's
+# JWT-protected API — useful if you want defense in depth for an
+# internet-facing deployment, on top of (not instead of) CyberNom's own auth.
+
+worker_processes auto;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    limit_req_zone $binary_remote_addr zone=cybernom_limit:10m rate=10r/s;
+
+    server {
+        listen 8443 ssl;
+        server_name cybernom.example.internal;
+
+        ssl_certificate     /etc/nginx/certs/fullchain.pem;
+        ssl_certificate_key /etc/nginx/certs/privkey.pem;
+        ssl_protocols       TLSv1.2 TLSv1.3;
+        ssl_ciphers         HIGH:!aNULL:!MD5;
+
+        # auth_basic           "CyberNom";
+        # auth_basic_user_file /etc/nginx/certs/.htpasswd;
+
+        limit_req zone=cybernom_limit burst=20 nodelay;
+
+        client_max_body_size 1m;
+
+        location / {
+            proxy_pass http://cybernom:8080;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 30s;
+        }
+    }
+}
